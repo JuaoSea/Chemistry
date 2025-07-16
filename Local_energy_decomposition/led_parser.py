@@ -1,122 +1,127 @@
+"""
+LED Analysis Parser for ORCA .out Files
+
+Este script pode ser chamado de qualquer diretório, bastando passar caminhos
+absolutos ou relativos para os arquivos .out.
+
+Instalação (Windows):
+  1. Coloque o led_parser.py em um diretório fixo, ex:
+       C:\scripts\led_parser.py
+  2. Crie em C:\Windows\System32 o arquivo led_parser.cmd (como administrador) com conteúdo:
+       @echo off
+       python "C:\scripts\led_parser.py" %*
+  3. Abra novo Prompt/PowerShell e chame:
+       led_parser.bat CpRe_pentane_LED.out CpRe_LED.out pentane_LED.out
+
+Uso genérico:
+  led_parser arquivo_complexo.out frag1.out frag2.out ...
+
+O script detecta automaticamente o arquivo complexo (sumário LED) e fragmentos,
+calcula:
+  - ΔE_el-prep^ref
+  - E_elstat^ref
+  - E_exch^ref
+  - ΔE_non-dispersion^C-CCSD
+  - E_dispersion^C-CCSD
+  - ΔE_T^C-(T)
+Convertendo de Hartree para kcal/mol. Trata termos ausentes como zero.
+"""
 import re
+import sys
 import argparse
 from pathlib import Path
 
-def parse_led_complex(output_text):
+# Conversão: 1 Hartree (Eh) -> kcal/mol
+AH_TO_KCAL = 627.5095
+
+# Padrões regex para extrair termos LED (case-insensitive, captura notação científica)
+PATTERNS = {
+    'intra_ref': re.compile(r"Intra fragment\s+(\d+)\s+\(REF\.\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
+    'electrostatics': re.compile(r"Electrostatics \(REF\.\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
+    'exchange': re.compile(r"Exchange \(REF\.\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
+    'disp_strong_block': re.compile(r"FINAL SUMMARY DLPNO-CCSD ENERGY DECOMPOSITION[\s\S]*?Dispersion \(strong pairs\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
+    'disp_weak_block': re.compile(r"FINAL SUMMARY DLPNO-CCSD ENERGY DECOMPOSITION[\s\S]*?Dispersion \(weak pairs\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
+    'non_disp_strong': re.compile(r"Non dispersion \(strong pairs\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
+    'non_disp_weak': re.compile(r"Non dispersion \(weak pairs\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
+    'triples': re.compile(r"Triples Correction\s*\(T\)\s*\.\.\.\s*([-\d\.Ee+]+)", re.IGNORECASE),
+    'E0': re.compile(r"^\s*E\(0\)\s*\.*\s*([-\d\.Ee+]+)", re.MULTILINE | re.IGNORECASE),
+    'E_CORR_corr': re.compile(r"^\s*E\(CORR\)\(corrected\)\s*\.*\s*([-\d\.Ee+]+)", re.MULTILINE | re.IGNORECASE),
+}
+
+def search_float(pattern: re.Pattern, text: str) -> float:
+    matches = list(pattern.finditer(text))
+    if not matches:
+        return 0.0
+    try:
+        return float(matches[-1].group(1))
+    except (ValueError, IndexError):
+        return 0.0
+
+def parse_file(path: Path) -> dict:
+    text = path.read_text(errors='ignore')
     data = {}
-    ref_matches = re.findall(r"Intra fragment\s+\d+ \(REF\.\)\s+([-+]?\d*\.\d+)", output_text)
-    if ref_matches:
-        data['intra_frag_refs'] = list(map(float, ref_matches))
-
-    me = re.search(r"Electrostatics \(REF\.\)\s+([-+]?\d*\.\d+)", output_text)
-    mx = re.search(r"Exchange \(REF\.\)\s+([-+]?\d*\.\d+)", output_text)
-    if me and mx:
-        data['E_elstat_ref'] = float(me.group(1))
-        data['E_exch_ref'] = float(mx.group(1))
-
-    ds = re.search(r"Dispersion \(strong pairs\)\s+([-+]?\d*\.\d+)", output_text)
-    dw = re.search(r"Dispersion \(weak pairs\)\s+([-+]?\d*\.\d+)", output_text)
-    if ds and dw:
-        data['disp_strong'] = float(ds.group(1))
-        data['disp_weak'] = float(dw.group(1))
-
-    nds = re.search(r"Non dispersion \(strong pairs\)\s+([-+]?\d*\.\d+)", output_text)
-    ndw = re.search(r"Non dispersion \(weak pairs\)\s+([-+]?\d*\.\d+)", output_text)
-    if nds and ndw:
-        data['non_disp_strong'] = float(nds.group(1))
-        data['non_disp_weak'] = float(ndw.group(1))
-
-    tc = re.search(r"Triples Correction \(T\)\s+(?:\.\.\.\s+)?([-+]?\d*\.\d+)", output_text)
-    if tc:
-        data['T_complex'] = float(tc.group(1))
-
-    corr_total = re.search(r"E\(CORR\)\(corrected\)\s+\.\.\.\s+([-+]?\d*\.\d+)", output_text)
-    if corr_total:
-        data['E_CORR_complex'] = float(corr_total.group(1))
-
+    if 'FINAL SUMMARY DLPNO-CCSD ENERGY DECOMPOSITION' in text:
+        data['type'] = 'complex'
+        data['intra_ref'] = {int(m.group(1)): float(m.group(2))
+                             for m in PATTERNS['intra_ref'].finditer(text)}
+        data['E_elstat'] = search_float(PATTERNS['electrostatics'], text)
+        data['E_exch'] = search_float(PATTERNS['exchange'], text)
+        data['E_disp'] = search_float(PATTERNS['disp_strong_block'], text) + search_float(PATTERNS['disp_weak_block'], text)
+        data['non_disp_total'] = search_float(PATTERNS['non_disp_strong'], text) + search_float(PATTERNS['non_disp_weak'], text)
+        data['T_complex'] = search_float(PATTERNS['triples'], text)
+    else:
+        data['type'] = 'fragment'
+        data['E0'] = search_float(PATTERNS['E0'], text)
+        data['E_CORR_corr'] = search_float(PATTERNS['E_CORR_corr'], text)
+        data['T_frag'] = search_float(PATTERNS['triples'], text)
     return data
 
-def parse_fragment(output_text):
-    data = {}
-    e0 = re.search(r"E\(0\)\s+\.\.\.\s+([-+]?\d*\.\d+)", output_text)
-    if e0:
-        data['E0'] = float(e0.group(1))
-
-    corr = re.search(r"E\(CORR\)\(corrected\)\s+\.\.\.\s+([-+]?\d*\.\d+)", output_text)
-    if corr:
-        data['E_CORR_corrected'] = float(corr.group(1))
-
-    tc = re.search(r"Triples Correction \(T\)\s+\.\.\.\s+([-+]?\d*\.\d+)", output_text)
-    if tc:
-        try:
-            data['T_frag'] = float(tc.group(1))
-        except ValueError:
-            pass
-
-    return data
-
-def hartree_to_kcalmol(val):
-    return val * 627.5095
-
-def main():
-    parser = argparse.ArgumentParser(description="Parse ORCA LED output and compute LED contributions.")
-    parser.add_argument("--complex", required=True, type=Path, help="ORCA output file for complex LED calculation")
-    parser.add_argument("--frag", required=True, nargs='+', type=Path, help="ORCA output file(s) for fragment LED calculations")
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Parser LED ORCA .out files')
+    parser.add_argument('files', metavar='FILE', nargs='+',
+                        help='Arquivos ORCA (.out), complexo e fragmentos')
     args = parser.parse_args()
 
-    text_complex = args.complex.read_text()
-    comp = parse_led_complex(text_complex)
-    frags = [parse_fragment(p.read_text()) for p in args.frag]
+    parsed = {}
+    complex_file = None
+    fragment_files = []
+    for f in args.files:
+        path = Path(f)
+        if not path.exists():
+            sys.exit(f"Erro: arquivo não encontrado -> {path}")
+        data = parse_file(path)
+        parsed[path] = data
+        if data['type'] == 'complex':
+            complex_file = path
+        else:
+            fragment_files.append(path)
 
-    E0_sum = sum(f.get('E0', 0.0) for f in frags)
-    E_corr_sum = sum(f.get('E_CORR_corrected', 0.0) for f in frags)
-    T_frag_sum = sum(f.get('T_frag', 0.0) for f in frags)
+    if complex_file is None or not fragment_files:
+        sys.exit('Erro: não detectei arquivo complexo ou fragmentos corretamente.')
 
-    intra_ref_sum = sum(comp.get('intra_frag_refs', []))
-    delta_E_el_prep = intra_ref_sum - E0_sum
-
-    E_disp = comp.get('disp_strong', 0.0) + comp.get('disp_weak', 0.0)
-    non_disp_sum = comp.get('non_disp_strong', 0.0) + comp.get('non_disp_weak', 0.0)
-
-    delta_E_C_CCS_non_disp = non_disp_sum - E_corr_sum
-    delta_E_C_T_int = comp.get('T_complex', 0.0) - T_frag_sum
-
-    total_int = (
-        delta_E_el_prep +
-        comp.get('E_elstat_ref', 0.0) +
-        comp.get('E_exch_ref', 0.0) +
-        delta_E_C_CCS_non_disp +
-        delta_E_C_T_int +
-        E_disp
+    comp = parsed[complex_file]
+    dE_el_prep = sum(
+        comp['intra_ref'].get(i+1, 0.0) - parsed[frag]['E0']
+        for i, frag in enumerate(fragment_files)
     )
+    sum_E_CORR = sum(parsed[frag]['E_CORR_corr'] for frag in fragment_files)
+    dE_non_disp = comp['non_disp_total'] - sum_E_CORR
+    E_disp = comp['E_disp']
+    E_elstat = comp['E_elstat']
+    E_exch = comp['E_exch']
+    T_complex = comp['T_complex']
+    sum_T_frag = sum(parsed[frag]['T_frag'] for frag in fragment_files)
+    dE_T = T_complex - sum_T_frag
+    dE_total = (dE_el_prep + E_elstat + E_exch + dE_non_disp + E_disp + dE_T)
 
-    print("LED Contributions (Hartree):")
-    print(f"Delta E_el-prep (ref): {delta_E_el_prep:.6f}")
-    print(f"E_elstat (ref): {comp.get('E_elstat_ref', 0.0):.6f}")
-    print(f"E_exch (ref): {comp.get('E_exch_ref', 0.0):.6f}")
-    print(f"Delta E_C-CCSD non-disp: {delta_E_C_CCS_non_disp:.6f}")
-    print(f"Delta E_C-(T) int: {delta_E_C_T_int:.6f}")
-    print(f"E_dispersion: {E_disp:.6f}")
-    print(f"Sum of LED terms: {total_int:.6f}\n")
-
-    print("LED Contributions (kcal/mol):")
-    terms = [
-        ('Delta E_el-prep (ref)', delta_E_el_prep),
-        ('E_elstat (ref)', comp.get('E_elstat_ref', 0.0)),
-        ('E_exch (ref)', comp.get('E_exch_ref', 0.0)),
-        ('Delta E_C-CCSD non-disp', delta_E_C_CCS_non_disp),
-        ('Delta E_C-(T) int', delta_E_C_T_int),
-        ('E_dispersion', E_disp),
-        ('Sum of LED terms', total_int)
-    ]
-    for name, val in terms:
-        print(f"{name}: {hartree_to_kcalmol(val):.2f}")
-
-if __name__ == "__main__":
-    main()
-
-''''''
-
-# python led_parser.py --complex complexo.out --frag frag1.out frag2.out
-
-''''''
+    print(f"{'Contribuição':30s} {'Hartree':>12s} {'kcal/mol':>12s}")
+    for label, value in [
+        ('Delta E_el-prep^ref', dE_el_prep),
+        ('E_elstat^ref', E_elstat),
+        ('E_exch^ref', E_exch),
+        ('Delta E_non-disp (C-CCSD)', dE_non_disp),
+        ('E_dispersion (C-CCSD)', E_disp),
+        ('Delta E_T (C-(T))', dE_T),
+        ('Soma total', dE_total),
+    ]:
+        print(f"{label:30s} {value:12.6f} {value * AH_TO_KCAL:12.2f}")
