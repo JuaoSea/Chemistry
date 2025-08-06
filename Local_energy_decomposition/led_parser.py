@@ -13,9 +13,6 @@ Instalação (Windows):
   3. Abra novo Prompt/PowerShell e chame:
        led_parser.bat CpRe_pentane_LED.out CpRe_LED.out pentane_LED.out
 
-Uso genérico:
-  led_parser arquivo_complexo.out frag1.out frag2.out ...
-
 O script detecta automaticamente o arquivo complexo (sumário LED) e fragmentos,
 calcula:
   - ΔE_el-prep^ref
@@ -26,6 +23,7 @@ calcula:
   - ΔE_T^C-(T)
 Convertendo de Hartree para kcal/mol. Trata termos ausentes como zero.
 """
+
 import re
 import sys
 import argparse
