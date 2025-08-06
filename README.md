@@ -20,7 +20,7 @@ This repository was developed by [@JuaoSea](https://github.com/JuaoSea), an unde
 
 ## 📝 Table of Contents
 
-- [Idea / Solution](#idea)
+- [Idea](#idea)
 - [Future Scope](#future_scope)
 - [Usage](#usage)
 - [Authors](#authors)
@@ -39,7 +39,7 @@ In the future, this project can be expanded with additional features and functio
 - **Integration with Machine Learning**: Implementing deep learning models for chemical property prediction and reaction optimization.  
 - **Web-based Applications**: Developing interactive web tools using frameworks like Streamlit or Flask to facilitate user-friendly chemical computations.  
 - **Database Expansion**: Extending support for larger datasets, including open-access chemical databases for more extensive analysis.  
-- **Quantum Chemistry Simulations**: Incorporating quantum mechanical calculations using software like Psi4 or OpenMolcas to model molecular behavior more accurately.  
+- **Quantum Chemistry Simulations**: Incorporating quantum mechanical calculations using software like ORCA and Avogadro to model molecular behavior more accurately.  
 - **Automation & Scripting**: Enhancing automation capabilities for experimental data processing, making lab workflows more efficient.  
 
 These improvements will make the project a more robust and valuable resource for the chemistry community.
@@ -52,7 +52,9 @@ These improvements will make the project a more robust and valuable resource for
 - [SciPy](https://scipy.org)  
 - [Scikit-learn](https://scikit-learn.org/stable/)  
 - [RDKit](https://www.rdkit.org)  
-- [Py3Dmol](https://github.com/avirshup/py3dmol)  
+- [Py3Dmol](https://github.com/avirshup/py3dmol) 
+- [ORCA](https://www.faccts.de/orca) 
+- [Avogadro](https://avogadro.cc) 
 
 ## ✍️ Authors <a name="authors"></a>
 
