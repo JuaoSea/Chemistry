@@ -1,4 +1,5 @@
-"""
+#!/usr/bin/env python3
+r"""
 LED Analysis Parser for ORCA .out Files
 
 Este script pode ser chamado de qualquer diretório, bastando passar caminhos
@@ -7,11 +8,23 @@ absolutos ou relativos para os arquivos .out.
 Instalação (Windows):
   1. Coloque o led_parser.py em um diretório fixo, ex:
        C:\scripts\led_parser.py
-  2. Crie em C:\Windows\System32 o arquivo led_parser.cmd (como administrador) com conteúdo:
+  2. Crie em C:\Windows\System32 o arquivo led_parser.bat (como administrador) com conteúdo:
        @echo off
        python "C:\scripts\led_parser.py" %*
   3. Abra novo Prompt/PowerShell e chame:
-       led_parser.bat CpRe_pentane_LED.out CpRe_LED.out pentane_LED.out
+       led_parser.bat COMPLEXO.out FRAGMENTO_1.out FRAGMENTO_2.out [...]
+
+Instalação (Linux):
+  1. Coloque o led_parser.py em um diretório fixo, ex:
+       ~/scripts/led_parser.py
+  2. Dê permissão de execução:
+       chmod +x ~/scripts/led_parser.py
+  3. (Opcional) Crie um link simbólico em um diretório do PATH, ex:
+       sudo ln -s ~/scripts/led_parser.py /usr/local/bin/led_parser
+  4. Agora pode chamar diretamente de qualquer pasta:
+       led_parser COMPLEXO.out FRAGMENTO_1.out FRAGMENTO_2.out [...]
+     ou, se não tiver feito o link simbólico:
+       python ~/scripts/led_parser.py COMPLEXO.out FRAGMENTO_1.out FRAGMENTO_2.out [...]
 
 O script detecta automaticamente o arquivo complexo (sumário LED) e fragmentos,
 calcula:
@@ -23,7 +36,6 @@ calcula:
   - ΔE_T^C-(T)
 Convertendo de Hartree para kcal/mol. Trata termos ausentes como zero.
 """
-
 import re
 import sys
 import argparse
@@ -123,3 +135,26 @@ if __name__ == '__main__':
         ('Soma total', dE_total),
     ]:
         print(f"{label:30s} {value:12.6f} {value * AH_TO_KCAL:12.2f}")
+        
+# --- Impressão no terminal + salvamento em .txt ---
+    header = f"{'Contribuição':30s} {'Hartree':>12s} {'kcal/mol':>12s}\n"
+    lines = []
+    for label, value in [
+        ('Delta E_el-prep^ref', dE_el_prep),
+        ('E_elstat^ref', E_elstat),
+        ('E_exch^ref', E_exch),
+        ('Delta E_non-disp (C-CCSD)', dE_non_disp),
+        ('E_dispersion (C-CCSD)', E_disp),
+        ('Delta E_T (C-(T))', dE_T),
+        ('Soma total', dE_total),
+    ]:
+        line = f"{label:30s} {value:12.6f} {value * AH_TO_KCAL:12.2f}"
+        lines.append(line)
+
+    # Junta tudo em uma string final
+    output_text = header + "\n".join(lines)
+
+    # Salva no diretório atual (onde o script foi chamado)
+    output_file = Path.cwd() / "led_results.txt"
+    output_file.write_text(output_text, encoding="utf-8")
+    print(f"\nResultados salvos em: {output_file}")
