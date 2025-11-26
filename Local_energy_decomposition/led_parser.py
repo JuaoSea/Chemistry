@@ -34,8 +34,11 @@ calcula:
   - ΔE_non-dispersion^C-CCSD
   - E_dispersion^C-CCSD
   - ΔE_T^C-(T)
+  - Sum (ΔE_total)
+  - E_dispersion^C-CCSD / ΔE_total
 Convertendo de Hartree para kcal/mol. Trata termos ausentes como zero.
 """
+
 import re
 import sys
 import argparse
@@ -44,13 +47,17 @@ from pathlib import Path
 # Conversão: 1 Hartree (Eh) -> kcal/mol
 AH_TO_KCAL = 627.5095
 
-# Padrões regex para extrair termos LED (case-insensitive, captura notação científica)
+# Padrões regex para extrair termos LED (case-insensitive)
 PATTERNS = {
     'intra_ref': re.compile(r"Intra fragment\s+(\d+)\s+\(REF\.\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
     'electrostatics': re.compile(r"Electrostatics \(REF\.\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
     'exchange': re.compile(r"Exchange \(REF\.\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
-    'disp_strong_block': re.compile(r"FINAL SUMMARY DLPNO-CCSD ENERGY DECOMPOSITION[\s\S]*?Dispersion \(strong pairs\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
-    'disp_weak_block': re.compile(r"FINAL SUMMARY DLPNO-CCSD ENERGY DECOMPOSITION[\s\S]*?Dispersion \(weak pairs\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
+    'disp_strong_block': re.compile(
+        r"FINAL SUMMARY DLPNO-CCSD ENERGY DECOMPOSITION[\s\S]*?Dispersion \(strong pairs\)\s+([-\d\.Ee+]+)",
+        re.IGNORECASE),
+    'disp_weak_block': re.compile(
+        r"FINAL SUMMARY DLPNO-CCSD ENERGY DECOMPOSITION[\s\S]*?Dispersion \(weak pairs\)\s+([-\d\.Ee+]+)",
+        re.IGNORECASE),
     'non_disp_strong': re.compile(r"Non dispersion \(strong pairs\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
     'non_disp_weak': re.compile(r"Non dispersion \(weak pairs\)\s+([-\d\.Ee+]+)", re.IGNORECASE),
     'triples': re.compile(r"Triples Correction\s*\(T\)\s*\.\.\.\s*([-\d\.Ee+]+)", re.IGNORECASE),
@@ -64,7 +71,7 @@ def search_float(pattern: re.Pattern, text: str) -> float:
         return 0.0
     try:
         return float(matches[-1].group(1))
-    except (ValueError, IndexError):
+    except Exception:
         return 0.0
 
 def parse_file(path: Path) -> dict:
@@ -76,8 +83,14 @@ def parse_file(path: Path) -> dict:
                              for m in PATTERNS['intra_ref'].finditer(text)}
         data['E_elstat'] = search_float(PATTERNS['electrostatics'], text)
         data['E_exch'] = search_float(PATTERNS['exchange'], text)
-        data['E_disp'] = search_float(PATTERNS['disp_strong_block'], text) + search_float(PATTERNS['disp_weak_block'], text)
-        data['non_disp_total'] = search_float(PATTERNS['non_disp_strong'], text) + search_float(PATTERNS['non_disp_weak'], text)
+        data['E_disp'] = (
+            search_float(PATTERNS['disp_strong_block'], text) +
+            search_float(PATTERNS['disp_weak_block'], text)
+        )
+        data['non_disp_total'] = (
+            search_float(PATTERNS['non_disp_strong'], text) +
+            search_float(PATTERNS['non_disp_weak'], text)
+        )
         data['T_complex'] = search_float(PATTERNS['triples'], text)
     else:
         data['type'] = 'fragment'
@@ -87,6 +100,7 @@ def parse_file(path: Path) -> dict:
     return data
 
 if __name__ == '__main__':
+
     parser = argparse.ArgumentParser(description='Parser LED ORCA .out files')
     parser.add_argument('files', metavar='FILE', nargs='+',
                         help='Arquivos ORCA (.out), complexo e fragmentos')
@@ -95,12 +109,15 @@ if __name__ == '__main__':
     parsed = {}
     complex_file = None
     fragment_files = []
+
     for f in args.files:
         path = Path(f)
         if not path.exists():
             sys.exit(f"Erro: arquivo não encontrado -> {path}")
+
         data = parse_file(path)
         parsed[path] = data
+
         if data['type'] == 'complex':
             complex_file = path
         else:
@@ -110,51 +127,82 @@ if __name__ == '__main__':
         sys.exit('Erro: não detectei arquivo complexo ou fragmentos corretamente.')
 
     comp = parsed[complex_file]
+
+    # ---- Cálculos em Hartree ----
     dE_el_prep = sum(
         comp['intra_ref'].get(i+1, 0.0) - parsed[frag]['E0']
         for i, frag in enumerate(fragment_files)
     )
+
     sum_E_CORR = sum(parsed[frag]['E_CORR_corr'] for frag in fragment_files)
     dE_non_disp = comp['non_disp_total'] - sum_E_CORR
+
     E_disp = comp['E_disp']
     E_elstat = comp['E_elstat']
     E_exch = comp['E_exch']
+
     T_complex = comp['T_complex']
     sum_T_frag = sum(parsed[frag]['T_frag'] for frag in fragment_files)
     dE_T = T_complex - sum_T_frag
-    dE_total = (dE_el_prep + E_elstat + E_exch + dE_non_disp + E_disp + dE_T)
 
+    # ---- Converte para kcal/mol ----
+    dE_el_prep_kcal = dE_el_prep * AH_TO_KCAL
+    E_elstat_kcal   = E_elstat * AH_TO_KCAL
+    E_exch_kcal     = E_exch * AH_TO_KCAL
+    dE_non_disp_kcal = dE_non_disp * AH_TO_KCAL
+    E_disp_kcal     = E_disp * AH_TO_KCAL
+    dE_T_kcal       = dE_T * AH_TO_KCAL
+
+    # Soma total (em kcal/mol)
+    dE_total_kcal = (
+        dE_el_prep_kcal +
+        E_elstat_kcal +
+        E_exch_kcal +
+        dE_non_disp_kcal +
+        E_disp_kcal +
+        dE_T_kcal
+    )
+
+    # ---- Razão usando valores em kcal/mol ----
+    if abs(dE_total_kcal) > 1e-12:
+        ratio_disp_total = E_disp_kcal / dE_total_kcal
+        ratio_disp_total_percent = ratio_disp_total * 100
+    else:
+        ratio_disp_total = None
+
+    # ---- Impressão ----
     print(f"{'Contribuição':30s} {'Hartree':>12s} {'kcal/mol':>12s}")
-    for label, value in [
-        ('Delta E_el-prep^ref', dE_el_prep),
-        ('E_elstat^ref', E_elstat),
-        ('E_exch^ref', E_exch),
-        ('Delta E_non-disp (C-CCSD)', dE_non_disp),
-        ('E_dispersion (C-CCSD)', E_disp),
-        ('Delta E_T (C-(T))', dE_T),
-        ('Soma total', dE_total),
-    ]:
-        print(f"{label:30s} {value:12.6f} {value * AH_TO_KCAL:12.2f}")
-        
-# --- Impressão no terminal + salvamento em .txt ---
-    header = f"{'Contribuição':30s} {'Hartree':>12s} {'kcal/mol':>12s}\n"
-    lines = []
-    for label, value in [
-        ('Delta E_el-prep^ref', dE_el_prep),
-        ('E_elstat^ref', E_elstat),
-        ('E_exch^ref', E_exch),
-        ('Delta E_non-disp (C-CCSD)', dE_non_disp),
-        ('E_dispersion (C-CCSD)', E_disp),
-        ('Delta E_T (C-(T))', dE_T),
-        ('Soma total', dE_total),
-    ]:
-        line = f"{label:30s} {value:12.6f} {value * AH_TO_KCAL:12.2f}"
-        lines.append(line)
+    table = [
+        ('Delta E_el-prep^ref', dE_el_prep, dE_el_prep_kcal),
+        ('E_elstat^ref', E_elstat, E_elstat_kcal),
+        ('E_exch^ref', E_exch, E_exch_kcal),
+        ('Delta E_non-disp (C-CCSD)', dE_non_disp, dE_non_disp_kcal),
+        ('E_dispersion (C-CCSD)', E_disp, E_disp_kcal),
+        ('Delta E_T (C-(T))', dE_T, dE_T_kcal),
+        ('Soma total', dE_total_kcal / AH_TO_KCAL, dE_total_kcal),
+    ]
 
-    # Junta tudo em uma string final
-    output_text = header + "\n".join(lines)
+    for label, hart, kcal in table:
+        print(f"{label:30s} {hart:12.6f} {kcal:12.2f}")
 
-    # Salva no diretório atual (onde o script foi chamado)
+    if ratio_disp_total is not None:
+        print("\nRazões (usando valores em kcal/mol):")
+        print(f"{'E_dispersion / Soma total':30s} {ratio_disp_total:12.6f} ({ratio_disp_total_percent:6.2f} %)")
+    else:
+        print("\nRazões:")
+        print(f"{'E_dispersion / Soma total':30s} N/A (divisão por zero)")
+
+    # ---- Salvamento no arquivo ----
     output_file = Path.cwd() / "led_results.txt"
-    output_file.write_text(output_text, encoding="utf-8")
+
+    lines = ["Contribuição                         Hartree      kcal/mol"]
+    for label, hart, kcal in table:
+        lines.append(f"{label:30s} {hart:12.6f} {kcal:12.2f}")
+
+    if ratio_disp_total is not None:
+        lines.append(f"E_dispersion / Soma total           {ratio_disp_total:12.6f} ({ratio_disp_total_percent:6.2f} %)")
+    else:
+        lines.append("E_dispersion / Soma total           N/A (divisão por zero)")
+
+    output_file.write_text("\n".join(lines), encoding="utf-8")
     print(f"\nResultados salvos em: {output_file}")
