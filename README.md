@@ -1,6 +1,6 @@
 <p align="center">
   <a href="" rel="noopener">
- <img src="https://www.acidadeon.com/saocarlos/wp-content/uploads/sites/6/2023/08/departamento_de_quxmica_ufscar.jpg" alt="Chemistry department"></a>
+ <img src="https://www.acidadeon.com/wp-content/uploads/sites/6/2023/08/departamento_de_quxmica_ufscar.jpg" alt="Chemistry department"></a>
 </p>
 
 <h1 align="center">Chemistry projects in Python</h1>
